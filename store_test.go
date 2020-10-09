@@ -2,7 +2,6 @@ package amqpStore_test
 
 import (
 	"errors"
-	"log"
 	"net"
 	"os"
 	"syscall"
@@ -89,7 +88,6 @@ func TestStore_Start(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			store := amqpStore.New(tt.args.conf.DSN(), tt.args.timeout)
 			gotErr := store.Start()
-			log.Printf("%T, %v %T %v", gotErr, gotErr, errors.Unwrap(gotErr), errors.Unwrap(gotErr))
 			assert.True(t, errors.Is(gotErr, tt.wantErr), gotErr)
 			t.Cleanup(store.Shutdown)
 		})
@@ -107,9 +105,57 @@ func TestStore_Start(t *testing.T) {
 
 func TestStore_Shutdown(t *testing.T) {
 	store := amqpStore.New(conf.DSN(), time.Second)
+
 	err := store.Start()
 	assert.NoError(t, err)
 	assert.True(t, store.IsRunning())
+
 	store.Shutdown()
 	assert.False(t, store.IsRunning())
+}
+
+func TestStore_Publish_Subscribe(t *testing.T) {
+	store := amqpStore.New(conf.DSN(), time.Second)
+
+	err := store.Start()
+	assert.NoError(t, err)
+	t.Cleanup(store.Shutdown)
+
+	testMsg := []byte("test message")
+	exchange := amqpStore.ExchangeConfig{
+		Name:       "test_exchange",
+		Type:       amqp.ExchangeDirect,
+		RoutingKey: "test_queue",
+		AutoDelete: true,
+		Queue:      amqpStore.QueueConfig{Name: "test_queue", AutoDelete: true},
+	}
+	publishConf := &amqpStore.PublishConfig{Exchange: exchange}
+	consumeConf := &amqpStore.ConsumeConfig{Exchange: exchange}
+
+	t.Run("succeed", func(t *testing.T) {
+		var gotMsg bool
+		err = store.Subscribe(consumeConf, func(delivery amqp.Delivery) {
+			assert.EqualValues(t, testMsg, delivery.Body)
+			gotMsg = true
+		})
+
+		err = store.Publish(publishConf, &amqp.Publishing{Body: testMsg})
+		assert.NoError(t, err, err)
+
+		// Wait until msg is delivered
+		time.Sleep(time.Second / 4)
+		assert.True(t, gotMsg)
+		assert.NoError(t, err, err)
+	})
+
+	t.Run("connection closed", func(t *testing.T) {
+		store.Shutdown()
+		err = store.Publish(publishConf, &amqp.Publishing{Body: testMsg})
+		assert.True(t, errors.Is(err, amqpStore.ErrStoreIsNotRunning), err)
+
+		err = store.Subscribe(consumeConf, func(delivery amqp.Delivery) {
+			assert.EqualValues(t, testMsg, delivery.Body)
+		})
+		assert.True(t, errors.Is(err, amqpStore.ErrStoreIsNotRunning), err)
+	})
 }
