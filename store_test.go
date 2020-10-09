@@ -1,71 +1,115 @@
 package amqpStore_test
 
 import (
+	"errors"
+	"log"
+	"net"
+	"os"
+	"syscall"
+	"testing"
 	"time"
 
 	"github.com/streadway/amqp"
+	"github.com/stretchr/testify/assert"
 
 	amqpStore "github.com/freemen-app/amqp-store"
 )
 
-func ExampleNew() {
-	conf := &amqpStore.Config{
-		Host:     "localhost",
-		Port:     "5672",
-		Username: "test",
-		Password: "test",
+var (
+	conf *amqpStore.Config
+)
+
+func TestMain(m *testing.M) {
+	conf = &amqpStore.Config{
+		Host:     os.Getenv("AMQP_HOST"),
+		Port:     os.Getenv("AMQP_PORT"),
+		Username: os.Getenv("AMQP_USERNAME"),
+		Password: os.Getenv("AMQP_PASSWORD"),
 	}
-	amqpStore.New(conf.DSN(), time.Second)
+	os.Exit(m.Run())
 }
 
-func ExampleStore_Publish() {
-	conf := &amqpStore.Config{
+func TestNew(t *testing.T) {
+	config := &amqpStore.Config{
 		Host:     "localhost",
 		Port:     "5672",
 		Username: "test",
 		Password: "test",
 	}
-	store := amqpStore.New(conf.DSN(), time.Second)
-
-	publishConfig := &amqpStore.PublishConfig{
-		Exchange: amqpStore.ExchangeConfig{
-			Name: "test",
-			Type: amqp.ExchangeFanout,
-		},
-	}
-	msg := &amqp.Publishing{
-		ContentType: "application/json",
-		Body:        []byte("test msg"),
-	}
-	err := store.Publish(publishConfig, msg)
-	if err != nil {
-		// Handle error
-	}
+	store := amqpStore.New(config.DSN(), time.Second)
+	assert.False(t, store.IsRunning())
+	assert.EqualValues(t, config.DSN(), store.DSN())
 }
 
-func ExampleStore_Subscribe() {
-	conf := &amqpStore.Config{
-		Host:     "localhost",
-		Port:     "5672",
-		Username: "test",
-		Password: "test",
+func TestStore_Start(t *testing.T) {
+	type args struct {
+		conf    *amqpStore.Config
+		timeout time.Duration
 	}
-	store := amqpStore.New(conf.DSN(), time.Second)
-
-	consumeConfig := &amqpStore.ConsumeConfig{
-		Exchange: amqpStore.ExchangeConfig{
-			Name:       "test",
-			Type:       amqp.ExchangeDirect,
-			RoutingKey: "test_queue",
-			Queue: amqpStore.QueueConfig{
-				Name: "test_queue",
+	tests := []struct {
+		name    string
+		args    args
+		wantErr error
+	}{
+		{
+			name: "succeed",
+			args: args{
+				conf:    conf,
+				timeout: time.Second,
 			},
 		},
+		{
+			name: "invalid credentials",
+			args: args{
+				conf: &amqpStore.Config{
+					Host:     "localhost",
+					Port:     "5672",
+					Username: "test",
+					Password: "test",
+				},
+				timeout: time.Second,
+			},
+			wantErr: amqp.ErrCredentials,
+		},
+		{
+			name: "invalid host/port",
+			args: args{
+				conf: &amqpStore.Config{
+					Host:     "localhost",
+					Port:     "5673",
+					Username: "test",
+					Password: "test",
+				},
+				timeout: time.Second,
+			},
+			wantErr: syscall.ECONNREFUSED,
+		},
 	}
-	err := store.Subscribe(consumeConfig, func(delivery amqp.Delivery) {
-		// Handle message
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := amqpStore.New(tt.args.conf.DSN(), tt.args.timeout)
+			gotErr := store.Start()
+			log.Printf("%T, %v %T %v", gotErr, gotErr, errors.Unwrap(gotErr), errors.Unwrap(gotErr))
+			assert.True(t, errors.Is(gotErr, tt.wantErr), gotErr)
+			t.Cleanup(store.Shutdown)
+		})
+	}
+
+	t.Run("timeout error", func(t *testing.T) {
+		store := amqpStore.New(conf.DSN(), 0)
+		err := store.Start()
+		opErr := &net.OpError{}
+		assert.True(t, errors.As(err, &opErr))
+		assert.True(t, opErr.Timeout())
+		t.Cleanup(store.Shutdown)
 	})
-	if err != nil {
-		// Handle error
-	}
+}
+
+func TestStore_Shutdown(t *testing.T) {
+	store := amqpStore.New(conf.DSN(), time.Second)
+	err := store.Start()
+	assert.NoError(t, err)
+	assert.True(t, store.IsRunning())
+	store.Shutdown()
+	assert.False(t, store.IsRunning())
 }

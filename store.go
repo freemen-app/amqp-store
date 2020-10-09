@@ -1,8 +1,6 @@
 package amqpStore
 
 import (
-	"io"
-	"log"
 	"net"
 	"time"
 
@@ -13,58 +11,53 @@ type (
 	Store interface {
 		Publish(publishConfig *PublishConfig, message *amqp.Publishing) error
 		Subscribe(consumeConfig *ConsumeConfig, handler func(amqp.Delivery)) error
-		Shutdown()
+		Start() error
+		Shutdown() error
 	}
 
 	store struct {
+		isRunning      bool
+		dsn            string
+		connConfig     amqp.Config
 		publishConn    *amqp.Connection
 		consumeConn    *amqp.Connection
 		publishChannel *amqp.Channel
 		consumeChannel *amqp.Channel
-		cleanupTasks   []io.Closer
 	}
 )
 
 func New(dsn string, timeout time.Duration) *store {
-	var err error
-	s := new(store)
-	defer s.shutdownOnPanic()
-
-	connConfig := amqp.Config{
-		Heartbeat: 10 * time.Second,
-		Locale:    "en_US",
-		Dial: func(network, addr string) (net.Conn, error) {
-			conn, err := net.DialTimeout(network, addr, timeout)
-			if err != nil {
-				return nil, err
-			} else if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
-				return nil, err
-			}
-			return conn, nil
+	return &store{
+		isRunning: false,
+		dsn:       dsn,
+		connConfig: amqp.Config{
+			Heartbeat: 10 * time.Second,
+			Locale:    "en_US",
+			Dial: func(network, addr string) (net.Conn, error) {
+				conn, err := net.DialTimeout(network, addr, timeout)
+				if err != nil {
+					return nil, err
+				} else if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
+					return nil, err
+				}
+				return conn, nil
+			},
 		},
 	}
-
-	s.publishConn, err = amqp.DialConfig(dsn, connConfig)
-	s.panicErr(err)
-	s.addCleanupTask(s.publishConn)
-
-	s.consumeConn, err = amqp.DialConfig(dsn, connConfig)
-	s.panicErr(err)
-	s.addCleanupTask(s.consumeConn)
-
-	s.publishChannel, err = s.publishConn.Channel()
-	s.panicErr(err)
-	s.addCleanupTask(s.publishChannel)
-
-	s.consumeChannel, err = s.consumeConn.Channel()
-	s.panicErr(err)
-	s.addCleanupTask(s.consumeChannel)
-
-	return s
 }
 
-func (s *store) Publish(publishConfig *PublishConfig,
-	message *amqp.Publishing) error {
+func (s *store) DSN() string {
+	return s.dsn
+}
+
+func (s *store) IsRunning() bool {
+	return s.isRunning
+}
+
+func (s *store) Publish(publishConfig *PublishConfig, message *amqp.Publishing) error {
+	if !s.IsRunning() {
+		return ErrStoreIsNotRunning
+	}
 	if err := s.publishChannel.ExchangeDeclare(
 		publishConfig.Exchange.Name,
 		publishConfig.Exchange.Type,
@@ -88,6 +81,9 @@ func (s *store) Publish(publishConfig *PublishConfig,
 }
 
 func (s *store) Subscribe(consumeConfig *ConsumeConfig, handler func(amqp.Delivery)) error {
+	if !s.IsRunning() {
+		return ErrStoreIsNotRunning
+	}
 	if err := s.consumeChannel.ExchangeDeclare(
 		consumeConfig.Exchange.Name,
 		consumeConfig.Exchange.Type,
@@ -139,35 +135,37 @@ func (s *store) Subscribe(consumeConfig *ConsumeConfig, handler func(amqp.Delive
 	return nil
 }
 
+func (s *store) Start() error {
+	var err error
+	if s.publishConn, err = amqp.DialConfig(s.dsn, s.connConfig); err != nil {
+		return err
+	}
+	if s.publishChannel, err = s.publishConn.Channel(); err != nil {
+		return err
+	}
+
+	if s.consumeConn, err = amqp.DialConfig(s.dsn, s.connConfig); err != nil {
+		return err
+	}
+	if s.consumeChannel, err = s.consumeConn.Channel(); err != nil {
+		return err
+	}
+	s.isRunning = true
+	return nil
+}
+
 func (s *store) Shutdown() {
-	lastIndex := len(s.cleanupTasks) - 1
-
-	for i := range s.cleanupTasks {
-		if err := s.cleanupTasks[lastIndex-i].Close(); err != nil {
-			log.Printf("error while closing rabbitmq object: %v", err)
-		}
+	if s.publishConn != nil && !s.publishConn.IsClosed() {
+		_ = s.publishConn.Close()
 	}
-}
-
-func (s *store) addCleanupTask(task io.Closer) {
-	s.cleanupTasks = append(s.cleanupTasks, task)
-}
-
-func (s *store) panicErr(err error) {
-	if err != nil {
-		panic(err)
+	if s.consumeConn != nil && !s.publishConn.IsClosed() {
+		_ = s.publishConn.Close()
 	}
+	s.isRunning = false
 }
 
 func consumeLoop(deliveries <-chan amqp.Delivery, handlerFunc func(d amqp.Delivery)) {
 	for d := range deliveries {
 		handlerFunc(d)
-	}
-}
-
-func (s *store) shutdownOnPanic() {
-	if r := recover(); r != nil {
-		s.Shutdown()
-		panic(r)
 	}
 }

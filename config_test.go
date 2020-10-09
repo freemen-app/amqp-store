@@ -195,17 +195,19 @@ func TestExchangeConfig_Validate(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		e := amqpStore.ExchangeConfig{Type: tt.fields.Type, Args: tt.fields.Args}
-		gotErr := e.Validate()
-		if tt.wantErrKey == "" {
-			assert.Nil(t, gotErr, gotErr)
-		} else {
-			assert.NotNil(t, gotErr, tt.wantErrKey)
-			assert.IsType(t, validation.Errors{}, gotErr)
-			validationErr := gotErr.(validation.Errors)
-			_, ok := validationErr[tt.wantErrKey]
-			assert.True(t, ok, validationErr.Error(), tt.wantErrKey)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			e := amqpStore.ExchangeConfig{Type: tt.fields.Type, Args: tt.fields.Args}
+			gotErr := e.Validate()
+			if tt.wantErrKey == "" {
+				assert.Nil(t, gotErr, gotErr)
+			} else {
+				assert.NotNil(t, gotErr, tt.wantErrKey)
+				assert.IsType(t, validation.Errors{}, gotErr)
+				validationErr := gotErr.(validation.Errors)
+				_, ok := validationErr[tt.wantErrKey]
+				assert.True(t, ok, validationErr.Error(), tt.wantErrKey)
+			}
+		})
 	}
 }
 
