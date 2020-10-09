@@ -12,7 +12,7 @@ type (
 		Publish(publishConfig *PublishConfig, message *amqp.Publishing) error
 		Subscribe(consumeConfig *ConsumeConfig, handler func(amqp.Delivery)) error
 		Start() error
-		Shutdown() error
+		Shutdown()
 	}
 
 	store struct {
@@ -26,7 +26,7 @@ type (
 	}
 )
 
-func New(dsn string, timeout time.Duration) *store {
+func New(dsn string, timeout time.Duration) Store {
 	return &store{
 		isRunning: false,
 		dsn:       dsn,
