@@ -26,16 +26,16 @@ type (
 		NoLocal   bool `config:"no_local"`
 		NoWait    bool `config:"no_wait"`
 		Args      amqp.Table
-		Exchange  exchangeConfig
+		Exchange  ExchangeConfig
 	}
 
 	PublishConfig struct {
 		Mandatory bool
 		Immediate bool
-		Exchange  exchangeConfig
+		Exchange  ExchangeConfig
 	}
 
-	exchangeConfig struct {
+	ExchangeConfig struct {
 		Name       string      `json:"name"`
 		Type       string      `json:"type"`
 		Durable    bool        `json:"durable"`
@@ -44,10 +44,10 @@ type (
 		NoWait     bool        `config:"no_wait" json:"no_wait"`
 		RoutingKey string      `config:"routing_key" json:"routing_key"`
 		Args       amqp.Table  `json:"args"`
-		Queue      queueConfig `json:"queue"`
+		Queue      QueueConfig `json:"queue"`
 	}
 
-	queueConfig struct {
+	QueueConfig struct {
 		Name       string
 		Durable    bool
 		AutoDelete bool `config:"auto_delete"`
@@ -94,7 +94,7 @@ func (c *ConsumeConfig) Validate() error {
 	return validation.Validate(&c.Exchange)
 }
 
-func (e exchangeConfig) Validate() error {
+func (e ExchangeConfig) Validate() error {
 	if err := validation.ValidateStruct(
 		&e,
 		validation.Field(&e.Type, validation.In(exchangeTypes...)),
