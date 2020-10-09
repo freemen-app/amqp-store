@@ -8,9 +8,15 @@ import (
 )
 
 type (
-	Store interface {
+	PubSub interface {
 		Publish(publishConfig *PublishConfig, message *amqp.Publishing) error
 		Subscribe(consumeConfig *ConsumeConfig, handler func(amqp.Delivery)) error
+	}
+
+	Store interface {
+		PubSub
+		DSN() string
+		IsRunning() bool
 		Start() error
 		Shutdown()
 	}
