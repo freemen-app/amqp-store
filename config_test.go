@@ -1,6 +1,7 @@
 package amqpStore_test
 
 import (
+	"errors"
 	"testing"
 
 	validation "github.com/go-ozzo/ozzo-validation/v4"
@@ -136,11 +137,9 @@ func TestAMQPConfig_Validate(t *testing.T) {
 			if tt.wantErrKey == "" {
 				assert.Nil(t, err, err)
 			} else {
-				assert.NotNil(t, err, tt.wantErrKey)
-				assert.IsType(t, validation.Errors{}, err)
-				validationErr := err.(validation.Errors)
-				_, ok := validationErr[tt.wantErrKey]
-				assert.True(t, ok, validationErr.Error(), tt.wantErrKey)
+				var validationErr validation.Errors
+				assert.True(t, errors.As(err, &validationErr), err)
+				assert.Contains(t, validationErr, tt.wantErrKey)
 			}
 		})
 	}
@@ -197,15 +196,13 @@ func TestExchangeConfig_Validate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e := amqpStore.ExchangeConfig{Type: tt.fields.Type, Args: tt.fields.Args}
-			gotErr := e.Validate()
+			err := e.Validate()
 			if tt.wantErrKey == "" {
-				assert.Nil(t, gotErr, gotErr)
+				assert.Nil(t, err, err)
 			} else {
-				assert.NotNil(t, gotErr, tt.wantErrKey)
-				assert.IsType(t, validation.Errors{}, gotErr)
-				validationErr := gotErr.(validation.Errors)
-				_, ok := validationErr[tt.wantErrKey]
-				assert.True(t, ok, validationErr.Error(), tt.wantErrKey)
+				var validationErr validation.Errors
+				assert.True(t, errors.As(err, &validationErr), err)
+				assert.Contains(t, validationErr, tt.wantErrKey)
 			}
 		})
 	}
